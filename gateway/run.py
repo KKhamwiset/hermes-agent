@@ -9703,6 +9703,29 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             except Exception as _filter_err:
                 logger.warning("Channel tool filter error (passing through): %s", _filter_err)
 
+            # Short-circuit: if tools were completely stripped by channel/group
+            # restrictions, skip calling the model entirely and send a friendly
+            # message instead of letting leaky serialization reach the user.
+            if not enabled_toolsets:
+                try:
+                    _dc_cfg = user_config.get("discord") or {}
+                    if _dc_cfg.get("tool_permissions"):
+                        _ct = getattr(source, 'chat_type', '')
+                        if _ct in ("group", "channel", "thread"):
+                            logger.info(
+                                "Tool filter short-circuit (bg task) for chat_type=%s",
+                                _ct,
+                            )
+                            await adapter.send(
+                                source.chat_id,
+                                "🌸 I can't run commands or access files in this channel~ "
+                                "If you need my help with something specific, DM me instead! 🍡",
+                                metadata=_thread_metadata,
+                            )
+                            return
+                except Exception:
+                    pass  # fall through to normal agent path on any error
+
             agent_cfg = user_config.get("agent") or {}
             disabled_toolsets = agent_cfg.get("disabled_toolsets") or None
 
@@ -12729,6 +12752,31 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         except Exception as _filter_err:
             logger.warning("Channel tool filter error (passing through): %s", _filter_err)
 
+        # Short-circuit: if tools were completely stripped by channel/group
+        # restrictions, skip calling the model entirely and return a friendly
+        # message instead of letting leaky serialization reach the user.
+        if not enabled_toolsets:
+            try:
+                _dc_cfg = user_config.get("discord") or {}
+                if _dc_cfg.get("tool_permissions"):
+                    _ct = getattr(source, 'chat_type', '')
+                    if _ct in ("group", "channel", "thread"):
+                        logger.info(
+                            "Tool filter short-circuit for chat_type=%s — returning fallback",
+                            _ct,
+                        )
+                        return {
+                            "final_response": (
+                                "🌸 I can't run commands or access files in this channel~ "
+                                "If you need my help with something specific, DM me instead! 🍡"
+                            ),
+                            "messages": [],
+                            "api_calls": 0,
+                            "completed": True,
+                        }
+            except Exception:
+                pass  # fall through to normal agent path on any error
+
         agent_cfg_local = user_config.get("agent") or {}
         disabled_toolsets = agent_cfg_local.get("disabled_toolsets") or None
 
@@ -12944,9 +12992,6 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             ):
                 _bash_block = f"```bash\n{args['command'].rstrip()}\n```"
             
-            # Tools whose preview should be wrapped in code blocks
-            _code_block_tools = {"terminal", "execute_code"}
-
             # Verbose mode: show detailed arguments, respects tool_preview_length
             if progress_mode == "verbose":
                 if _bash_block is not None:
@@ -12960,33 +13005,31 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     # detail.  Platform message-length limits handle the rest.
                     if _pl > 0 and len(args_str) > _pl:
                         args_str = args_str[:_pl - 3] + "..."
-                    if tool_name in _code_block_tools:
-                        cmd = args.get("command", args_str)
-                        msg = f"{emoji} {tool_name}\n```\n{cmd}\n```"
-                    else:
-                        msg = f"{emoji} {tool_name}({list(args.keys())})\n{args_str}"
+                    # Wrap ALL tool previews in code blocks for code-block-capable
+                    # platforms (Discord, Telegram via formatting-hack, etc.)
+                    msg = f"{emoji} {tool_name}\n```\n{args_str}\n```"
                 elif preview:
-                    msg = f"{emoji} {tool_name}: \"{preview}\""
+                    msg = f"{emoji} {tool_name}\n```\n{preview}\n```"
                 else:
                     msg = f"{emoji} {tool_name}..."
                 progress_queue.put(msg)
                 return
 
             # "all" / "new" modes: short preview, respects tool_preview_length
-            # config (defaults to 40 chars when unset to keep gateway messages
-            # compact — unlike CLI spinners, these persist as permanent messages).
+            # config (defaults to 200 chars for code-block-capable platforms
+            # since code blocks visually separate content — need enough room
+            # to show a meaningful URL/path before truncation).
             if _bash_block is not None:
                 msg = _bash_block
             elif preview:
                 from agent.display import get_tool_preview_max_len
                 _pl = get_tool_preview_max_len()
-                _cap = _pl if _pl > 0 else 40
+                _cap = _pl if _pl > 0 else 200
                 if len(preview) > _cap:
                     preview = preview[:_cap - 3] + "..."
-                if tool_name in _code_block_tools:
-                    msg = f"{emoji} {tool_name}\n```\n{preview}\n```"
-                else:
-                    msg = f"{emoji} {tool_name}: \"{preview}\""
+                # Wrap ALL tool previews in code blocks for readability
+                # on code-block-capable platforms
+                msg = f"{emoji} {tool_name}\n```\n{preview}\n```"
             else:
                 msg = f"{emoji} {tool_name}..."
             
