@@ -812,21 +812,6 @@ class DiscordAdapter(BasePlatformAdapter):
                     ):
                         return
 
-                # Trigger word bypass: if message contains a configured
-                # trigger word (e.g. "mochi"), process it even without @mention
-                _trigger_word_hit = False
-                if not isinstance(message.channel, discord.DMChannel):
-                    try:
-                        _triggers = adapter_self._discord_trigger_words()
-                        if _triggers:
-                            _content_lower = (message.content or "").lower()
-                            _trigger_word_hit = any(t.lower() in _content_lower for t in _triggers)
-                    except Exception:
-                        pass
-                if _trigger_word_hit:
-                    await self._handle_message(message)
-                    return
-
                 # Multi-agent filtering: if the message mentions specific bots
                 # but NOT this bot, the sender is talking to another agent —
                 # stay silent.  Messages with no bot mentions (general chat)
@@ -4835,14 +4820,24 @@ class DiscordAdapter(BasePlatformAdapter):
             # — UNLESS thread_require_mention is enabled, in which case threads
             # are gated the same as channels.  Useful when multiple bots share
             # a thread.
+            #
+            # When trigger_words are configured, bot threads also require a
+            # trigger word — the bot no longer responds to every message.
+            _trigger_word_hit = False
+            _triggers = self._discord_trigger_words()
+            if _triggers:
+                _content_lower = (message.content or "").lower()
+                _trigger_word_hit = any(t.lower() in _content_lower for t in _triggers)
+
             in_bot_thread = (
                 is_thread
                 and thread_id in self._threads
                 and not self._discord_thread_require_mention()
+                and (not _triggers or _trigger_word_hit)  # require trigger word if configured
             )
 
             if require_mention and not is_free_channel and not in_bot_thread:
-                if self._client.user not in message.mentions and not mention_prefix:
+                if self._client.user not in message.mentions and not mention_prefix and not _trigger_word_hit:
                     return
         # Auto-thread: when enabled, automatically create a thread for every
         # @mention in a text channel so each conversation is isolated (like Slack).
