@@ -3702,7 +3702,7 @@ class DiscordAdapter(BasePlatformAdapter):
             chat_name=chat_name,
             chat_type=chat_type,
             user_id=str(interaction.user.id),
-            user_name=interaction.user.display_name,
+            user_name=interaction.user.name,
             thread_id=thread_id,
             chat_topic=chat_topic,
         )
@@ -3784,7 +3784,7 @@ class DiscordAdapter(BasePlatformAdapter):
             chat_name=chat_name,
             chat_type="thread",
             user_id=str(interaction.user.id),
-            user_name=interaction.user.display_name,
+            user_name=interaction.user.name,
             thread_id=thread_id,
             chat_topic=chat_topic,
         )
@@ -4872,12 +4872,18 @@ class DiscordAdapter(BasePlatformAdapter):
 
         # Build source
         guild = getattr(message, "guild", None)
+        # Debug: log username vs display_name to verify correct field
+        _author = message.author
+        logger.info(
+            "[Discord] user identification: name=%r display_name=%r global_name=%r",
+            _author.name, _author.display_name, getattr(_author, 'global_name', None),
+        )
         source = self.build_source(
             chat_id=str(effective_channel.id),
             chat_name=chat_name,
             chat_type=chat_type,
             user_id=str(message.author.id),
-            user_name=message.author.display_name,
+            user_name=message.author.name,
             thread_id=thread_id,
             chat_topic=chat_topic,
             is_bot=getattr(message.author, "bot", False),

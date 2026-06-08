@@ -12742,6 +12742,21 @@ class GatewayRunner:
 
             from hermes_cli.tools_config import _get_platform_tools
             enabled_toolsets = sorted(_get_platform_tools(user_config, platform_key))
+
+            # Channel-aware tool filtering: restrict tools based on user + chat type
+            try:
+                from gateway.channel_tool_filter import filter_toolsets_for_source
+                enabled_toolsets = sorted(filter_toolsets_for_source(
+                    set(enabled_toolsets),
+                    user_id=getattr(source, 'user_id', None),
+                    chat_type=getattr(source, 'chat_type', 'dm'),
+                    guild_id=getattr(source, 'guild_id', None),
+                    chat_id=getattr(source, 'chat_id', None),
+                    config=user_config,
+                ))
+            except Exception as _filter_err:
+                logger.warning("Channel tool filter error (passing through): %s", _filter_err)
+
             agent_cfg = user_config.get("agent") or {}
             disabled_toolsets = agent_cfg.get("disabled_toolsets") or None
 
@@ -17145,6 +17160,21 @@ class GatewayRunner:
 
         from hermes_cli.tools_config import _get_platform_tools
         enabled_toolsets = sorted(_get_platform_tools(user_config, platform_key))
+
+        # Channel-aware tool filtering: restrict tools based on user + chat type
+        try:
+            from gateway.channel_tool_filter import filter_toolsets_for_source
+            enabled_toolsets = sorted(filter_toolsets_for_source(
+                set(enabled_toolsets),
+                user_id=getattr(source, 'user_id', None),
+                chat_type=getattr(source, 'chat_type', 'dm'),
+                guild_id=getattr(source, 'guild_id', None),
+                chat_id=getattr(source, 'chat_id', None),
+                config=user_config,
+            ))
+        except Exception as _filter_err:
+            logger.warning("Channel tool filter error (passing through): %s", _filter_err)
+
         agent_cfg_local = user_config.get("agent") or {}
         disabled_toolsets = agent_cfg_local.get("disabled_toolsets") or None
 
@@ -17340,6 +17370,9 @@ class GatewayRunner:
             from agent.display import get_tool_emoji
             emoji = get_tool_emoji(tool_name, default="⚙️")
             
+            # Tools whose preview should be wrapped in code blocks
+            _code_block_tools = {"terminal", "execute_code"}
+
             # Verbose mode: show detailed arguments, respects tool_preview_length
             if progress_mode == "verbose":
                 if args:
@@ -17351,14 +17384,18 @@ class GatewayRunner:
                     # detail.  Platform message-length limits handle the rest.
                     if _pl > 0 and len(args_str) > _pl:
                         args_str = args_str[:_pl - 3] + "..."
-                    msg = f"{emoji} {tool_name}({list(args.keys())})\n{args_str}"
+                    if tool_name in _code_block_tools:
+                        cmd = args.get("command", args_str)
+                        msg = f"{emoji} {tool_name}\n```\n{cmd}\n```"
+                    else:
+                        msg = f"{emoji} {tool_name}({list(args.keys())})\n{args_str}"
                 elif preview:
                     msg = f"{emoji} {tool_name}: \"{preview}\""
                 else:
                     msg = f"{emoji} {tool_name}..."
                 progress_queue.put(msg)
                 return
-            
+
             # "all" / "new" modes: short preview, respects tool_preview_length
             # config (defaults to 40 chars when unset to keep gateway messages
             # compact — unlike CLI spinners, these persist as permanent messages).
@@ -17368,7 +17405,10 @@ class GatewayRunner:
                 _cap = _pl if _pl > 0 else 40
                 if len(preview) > _cap:
                     preview = preview[:_cap - 3] + "..."
-                msg = f"{emoji} {tool_name}: \"{preview}\""
+                if tool_name in _code_block_tools:
+                    msg = f"{emoji} {tool_name}\n```\n{preview}\n```"
+                else:
+                    msg = f"{emoji} {tool_name}: \"{preview}\""
             else:
                 msg = f"{emoji} {tool_name}..."
             
